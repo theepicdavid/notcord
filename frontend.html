@@ -9,7 +9,7 @@
         margin: 0;
         font-family: Arial, sans-serif;
         background-color: #36393f;
-        color: white;
+        color: white;         
         display: flex;
         flex-direction: column;
         height: 100vh;
@@ -160,7 +160,7 @@ function switchServer(newServer) {
     document.getElementById("messages").innerHTML = "";
     document.getElementById("currentServer").textContent = "#" + server;
     localStorage.setItem("notcordAccount", JSON.stringify({username, tag, server}));
-    connectWebSocket(); // reconnect to new server
+    connectWebSocket(); // reconnect to new server //test 
 }
 
 function connectWebSocket() {
