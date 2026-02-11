@@ -1,10 +1,23 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 from typing import List
+import json
+import os
+import uuid
+from pathlib import Path
 
+# -----------------------
+# APP SETUP
+# -----------------------
 app = FastAPI()
+
+# Serve static files (images, profile pics)
+Path("static/uploads").mkdir(parents=True, exist_ok=True)
+Path("static/pfps").mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # -----------------------
 # DATABASE SETUP
@@ -17,18 +30,26 @@ Base = declarative_base()
 class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True)
-    content = Column(String)
+    username = Column(String)
     server = Column(String, default="general")
+    content = Column(String)
+    img_path = Column(String, default="")  # Optional image
+    pfp_path = Column(String, default="")  # Optional profile picture
+
+class Server(Base):
+    __tablename__ = "servers"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True)
 
 Base.metadata.create_all(bind=engine)
 
 # -----------------------
 # CONFIG
 # -----------------------
-MAINTENANCE_MODE = True # Set True to activate maintenance page
+MAINTENANCE_MODE = False
 
 # -----------------------
-# CONNECTIONS
+# WEBSOCKET CONNECTION MANAGER
 # -----------------------
 class ConnectionManager:
     def __init__(self):
@@ -39,140 +60,64 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
-    async def broadcast(self, message: str):
+    async def broadcast(self, message: dict, server: str):
         for connection in self.active_connections:
-            await connection.send_text(message)
+            await connection.send_text(json.dumps(message))
 
 manager = ConnectionManager()
-
-# -----------------------
-# HTML & FRONTEND
-# -----------------------
-html = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>NOTCORD 2.0</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
-body { margin:0; font-family: Arial, sans-serif; background:#36393f; color:white; }
-.header { background:#2f3136; padding:15px; font-size:20px; display:flex; justify-content:space-between; align-items:center; }
-#serverSelect { background:#40444b; color:white; border:none; padding:5px; border-radius:5px; }
-.chat-container { padding:10px; height:60vh; overflow-y:auto; background:#2f3136; }
-input { padding:10px; border:none; border-radius:5px; flex:1; }
-button { padding:10px; background:#5865f2; color:white; border:none; border-radius:5px; cursor:pointer; }
-.message-input { display:flex; position:fixed; bottom:0; width:100%; padding:10px; background:#40444b; gap:5px; }
-.message { margin-bottom:5px; }
-.username { font-weight:bold; color:#7289da; }
-</style>
-</head>
-<body>
-
-<div class="header">
-    <span>NOTCORD 2.0</span>
-    <select id="serverSelect" onchange="changeServer()">
-        <option value="general">#general</option>
-    </select>
-</div>
-
-<div id="login" style="padding:20px;">
-    <input id="username" placeholder="Enter username">
-    <button onclick="joinChat()">Join Chat</button>
-</div>
-
-<div id="chat" style="display:none;">
-    <div id="messages" class="chat-container"></div>
-    <div class="message-input">
-        <input id="messageInput" placeholder="Type message">
-        <button onclick="sendMessage()">Send</button>
-    </div>
-</div>
-
-<script>
-let ws;
-let username;
-let server = "general";
-
-function joinChat() {
-    username = document.getElementById("username").value.trim();
-    if(!username) return alert("Enter username");
-
-    ws = new WebSocket(
-        location.protocol === "https:" ? "wss://" + location.host + "/ws" : "ws://" + location.host + "/ws"
-    );
-
-    ws.onopen = () => console.log("Connected!");
-    ws.onmessage = function(event) {
-        const messages = document.getElementById("messages");
-        const data = JSON.parse(event.data);
-        if(data.server !== server) return;
-
-        const div = document.createElement("div");
-        div.classList.add("message");
-        const userSpan = document.createElement("span");
-        userSpan.className = "username";
-        userSpan.textContent = data.username + ": ";
-        div.appendChild(userSpan);
-        div.appendChild(document.createTextNode(data.content));
-        messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
-    };
-
-    ws.onclose = () => alert("Disconnected from server.");
-
-    document.getElementById("login").style.display = "none";
-    document.getElementById("chat").style.display = "block";
-}
-
-function sendMessage() {
-    const input = document.getElementById("messageInput");
-    if(input.value.trim()==="") return;
-    ws.send(JSON.stringify({username: username, content: input.value, server: server}));
-    input.value = "";
-}
-
-// Send message on Enter
-document.getElementById("messageInput").addEventListener("keydown", function(e) {
-    if(e.key === "Enter") sendMessage();
-});
-
-// Change server / room
-function changeServer() {
-    server = document.getElementById("serverSelect").value;
-    document.getElementById("messages").innerHTML = "";
-}
-</script>
-
-</body>
-</html>
-"""
-
-maintenance_html = """
-<html>
-<head>
-<title>NOTCORD Maintenance</title>
-<style>
-body { background:#36393f; color:white; font-family:Arial; text-align:center; padding-top:50px; }
-h1 { color:#7289da; }
-</style>
-</head>
-<body>
-<h1>🚧 NOTCORD is temporarily offline for updates!</h1>
-<p>We’ll be back shortly. Thanks for your patience.</p>
-</body>
-</html>
-"""
 
 # -----------------------
 # ROUTES
 # -----------------------
 @app.get("/")
-async def get(request: Request):
+async def home(request: Request):
     if MAINTENANCE_MODE:
-        return HTMLResponse(maintenance_html, status_code=503)
-    return HTMLResponse(html)
+        return HTMLResponse("""
+        <html><head><title>NOTCORD Maintenance</title>
+        <style>body{background:#36393f;color:white;font-family:Arial;text-align:center;padding-top:50px;}
+        h1{color:#7289da}</style></head>
+        <body>
+        <h1>🚧 NOTCORD is temporarily offline for updates!</h1>
+        <p>We'll be back shortly.</p>
+        </body></html>""", status_code=503)
+
+    return HTMLResponse(open("frontend.html", "r").read())  # External HTML file for GUI
+
+# Upload profile picture
+@app.post("/upload_pfp")
+async def upload_pfp(username: str = Form(...), file: UploadFile = File(...)):
+    ext = Path(file.filename).suffix
+    filename = f"{username}_{uuid.uuid4().hex}{ext}"
+    filepath = Path("static/pfps") / filename
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return {"pfp_path": f"/static/pfps/{filename}"}
+
+# Upload image in message
+@app.post("/upload_image")
+async def upload_image(file: UploadFile = File(...)):
+    ext = Path(file.filename).suffix
+    filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = Path("static/uploads") / filename
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return {"img_path": f"/static/uploads/{filename}"}
+
+# Create server
+@app.post("/create_server")
+async def create_server(name: str = Form(...)):
+    db = SessionLocal()
+    if db.query(Server).filter_by(name=name).first():
+        db.close()
+        return {"error": "Server already exists"}
+    new_server = Server(name=name)
+    db.add(new_server)
+    db.commit()
+    db.close()
+    return {"success": True}
 
 # -----------------------
 # WEBSOCKET
@@ -185,24 +130,42 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await manager.connect(websocket)
     db = SessionLocal()
-
-    # Send previous messages
-    messages = db.query(Message).all()
-    for msg in messages:
-        await websocket.send_text(f'{{"username":"{msg.content.split(": ")[0]}","content":"{": ".join(msg.content.split(": ")[1:])}","server":"general"}}')
-
     try:
+        # Receive server join info from client
+        join_data = await websocket.receive_text()
+        join_json = json.loads(join_data)
+        server = join_json.get("server", "general")
+        username = join_json.get("username", "Anon")
+
+        # Send last 50 messages from this server (lazy-load)
+        messages = db.query(Message).filter_by(server=server).order_by(Message.id.desc()).limit(50).all()
+        for msg in reversed(messages):
+            await websocket.send_text(json.dumps({
+                "username": msg.username,
+                "content": msg.content,
+                "server": msg.server,
+                "img_path": msg.img_path,
+                "pfp_path": msg.pfp_path
+            }))
+
         while True:
             data = await websocket.receive_text()
-            import json
-            msg = json.loads(data)
-            # Save to database
-            new_msg = Message(content=f'{msg["username"]}: {msg["content"]}', server=msg["server"])
+            msg_json = json.loads(data)
+
+            # Save to DB immediately
+            new_msg = Message(
+                username=msg_json["username"],
+                content=msg_json["content"],
+                server=msg_json.get("server", "general"),
+                img_path=msg_json.get("img_path", ""),
+                pfp_path=msg_json.get("pfp_path", "")
+            )
             db.add(new_msg)
             db.commit()
-            # Broadcast
-            await manager.broadcast(json.dumps(msg))
+
+            # Broadcast and forget (not stored in RAM)
+            await manager.broadcast(msg_json, server)
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         db.close()
-
