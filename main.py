@@ -28,7 +28,7 @@ Base.metadata.create_all(bind=engine)
 connected_users = []
 
 # -----------------------
-# FRONTEND HTML (embedded)
+# FRONTEND HTML
 # -----------------------
 html = """
 <!DOCTYPE html>
@@ -92,7 +92,8 @@ function joinChat(fromStorage=false) {
         localStorage.setItem("notcordUser", JSON.stringify({username, usertag}));
     }
 
-    ws = new WebSocket("ws://" + location.host + "/ws");
+    let protocol = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(protocol + location.host + "/ws");
 
     ws.onmessage = function(event){
         const messages = document.getElementById("messages");
