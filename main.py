@@ -8,7 +8,6 @@ app = FastAPI()
 # -----------------------
 # DATABASE SETUP
 # -----------------------
-
 DATABASE_URL = "sqlite:///./notcord.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
@@ -24,54 +23,25 @@ Base.metadata.create_all(bind=engine)
 # -----------------------
 # WEBSOCKET CONNECTIONS
 # -----------------------
-
 connected_users = []
 
 # -----------------------
 # FRONTEND HTML
 # -----------------------
-
 html = """
 <!DOCTYPE html>
 <html>
 <head>
 <title>NOTCORD</title>
 <style>
-body {
-    margin: 0;
-    font-family: Arial;
-    background-color: #36393f;
-    color: white;
-}
-.header {
-    background: #2f3136;
-    padding: 15px;
-    font-size: 20px;
-}
-.chat-container {
-    padding: 20px;
-    height: 70vh;
-    overflow-y: auto;
-}
-input {
-    padding: 10px;
-    border: none;
-    border-radius: 5px;
-}
-button {
-    padding: 10px;
-    background: #5865f2;
-    color: white;
-    border: none;
-    border-radius: 5px;
-}
-.message-input {
-    position: fixed;
-    bottom: 0;
-    width: 100%;
-    padding: 15px;
-    background: #40444b;
-}
+body { margin:0; font-family: Arial; background:#36393f; color:white; }
+.header { background:#2f3136; padding:15px; font-size:20px; }
+.chat-container { padding:20px; height:70vh; overflow-y:auto; }
+input { padding:10px; border:none; border-radius:5px; }
+button { padding:10px; background:#5865f2; color:white; border:none; border-radius:5px; cursor:pointer; }
+.message-input { position:fixed; bottom:0; width:100%; padding:15px; background:#40444b; display:flex; gap:10px; }
+.message { margin-bottom:5px; }
+.username { font-weight:bold; color:#7289da; }
 </style>
 </head>
 <body>
@@ -88,7 +58,7 @@ button {
 <div id="chat" style="display:none;">
     <div id="messages" class="chat-container"></div>
     <div class="message-input">
-        <input id="messageInput" style="width:80%;" placeholder="Type message">
+        <input id="messageInput" style="flex:1;" placeholder="Type message">
         <button onclick="sendMessage()">Send</button>
     </div>
 </div>
@@ -98,18 +68,40 @@ let ws;
 let username;
 
 function joinChat() {
-    username = document.getElementById("username").value;
-    if (!username) return alert("Enter username");
+    username = document.getElementById("username").value.trim();
+    if(!username) return alert("Enter username");
 
-    ws = new WebSocket("ws://" + location.host + "/ws");
+    // Use WSS if page is HTTPS
+    ws = new WebSocket(
+        location.protocol === "https:" ? "wss://" + location.host + "/ws" : "ws://" + location.host + "/ws"
+    );
+
+    ws.onopen = () => console.log("Connected to NOTCORD!");
 
     ws.onmessage = function(event) {
         const messages = document.getElementById("messages");
         const div = document.createElement("div");
-        div.textContent = event.data;
+        div.classList.add("message");
+        
+        // Optional: highlight username
+        const parts = event.data.split(": ");
+        if(parts.length > 1){
+            const userSpan = document.createElement("span");
+            userSpan.className = "username";
+            userSpan.textContent = parts[0] + ": ";
+            div.appendChild(userSpan);
+            
+            const msgText = document.createTextNode(parts.slice(1).join(": "));
+            div.appendChild(msgText);
+        } else {
+            div.textContent = event.data;
+        }
+
         messages.appendChild(div);
         messages.scrollTop = messages.scrollHeight;
     };
+
+    ws.onclose = () => alert("Disconnected from server.");
 
     document.getElementById("login").style.display = "none";
     document.getElementById("chat").style.display = "block";
@@ -117,7 +109,7 @@ function joinChat() {
 
 function sendMessage() {
     const input = document.getElementById("messageInput");
-    if (input.value.trim() === "") return;
+    if(input.value.trim() === "") return;
     ws.send(username + ": " + input.value);
     input.value = "";
 }
@@ -135,7 +127,6 @@ async def get():
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_users.append(websocket)
-
     db = SessionLocal()
 
     # Send previous messages
@@ -146,16 +137,13 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
-
             # Save to database
             new_msg = Message(content=data)
             db.add(new_msg)
             db.commit()
-
-            # Broadcast
+            # Broadcast to all users
             for user in connected_users:
                 await user.send_text(data)
-
     except WebSocketDisconnect:
         connected_users.remove(websocket)
         db.close()
