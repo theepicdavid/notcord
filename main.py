@@ -1,22 +1,21 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
-from typing import List
-import json
+from datetime import datetime
 import os
 import uuid
-from pathlib import Path
+import json
+import random
 
 # -----------------------
-# APP SETUP
+# APP & STATIC SETUP
 # -----------------------
 app = FastAPI()
 
-# Serve static files (images, profile pics)
-Path("static/uploads").mkdir(parents=True, exist_ok=True)
-Path("static/pfps").mkdir(parents=True, exist_ok=True)
+os.makedirs("static/images", exist_ok=True)
+os.makedirs("static/pfps", exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # -----------------------
@@ -30,142 +29,130 @@ Base = declarative_base()
 class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String)
     server = Column(String, default="general")
+    username = Column(String)
+    tag = Column(String)
     content = Column(String)
-    img_path = Column(String, default="")  # Optional image
-    pfp_path = Column(String, default="")  # Optional profile picture
-
-class Server(Base):
-    __tablename__ = "servers"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True)
+    img_path = Column(String, nullable=True)
+    timestamp = Column(String)
 
 Base.metadata.create_all(bind=engine)
 
 # -----------------------
-# CONFIG
+# GLOBALS
 # -----------------------
+connected_users = {}  # {server_name: [websocket, ...]}
 MAINTENANCE_MODE = False
 
-# -----------------------
-# WEBSOCKET CONNECTION MANAGER
-# -----------------------
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-
-    async def broadcast(self, message: dict, server: str):
-        for connection in self.active_connections:
-            await connection.send_text(json.dumps(message))
-
-manager = ConnectionManager()
+DEFAULT_PFP = "data:image/png;base64,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"
 
 # -----------------------
-# ROUTES
+# FRONTEND HTML
 # -----------------------
+html_file = "frontend.html"
+if os.path.exists(html_file):
+    with open(html_file, "r", encoding="utf-8") as f:
+        html_content = f.read()
+else:
+    html_content = "<h1>NOTCORD Frontend Missing!</h1>"
+
 @app.get("/")
-async def home(request: Request):
+async def get():
     if MAINTENANCE_MODE:
-        return HTMLResponse("""
-        <html><head><title>NOTCORD Maintenance</title>
-        <style>body{background:#36393f;color:white;font-family:Arial;text-align:center;padding-top:50px;}
-        h1{color:#7289da}</style></head>
-        <body>
-        <h1>🚧 NOTCORD is temporarily offline for updates!</h1>
-        <p>We'll be back shortly.</p>
-        </body></html>""", status_code=503)
-
-    return HTMLResponse(open("frontend.html", "r").read())  # External HTML file for GUI
-
-# Upload profile picture
-@app.post("/upload_pfp")
-async def upload_pfp(username: str = Form(...), file: UploadFile = File(...)):
-    ext = Path(file.filename).suffix
-    filename = f"{username}_{uuid.uuid4().hex}{ext}"
-    filepath = Path("static/pfps") / filename
-    with open(filepath, "wb") as f:
-        f.write(await file.read())
-    return {"pfp_path": f"/static/pfps/{filename}"}
-
-# Upload image in message
-@app.post("/upload_image")
-async def upload_image(file: UploadFile = File(...)):
-    ext = Path(file.filename).suffix
-    filename = f"{uuid.uuid4().hex}{ext}"
-    filepath = Path("static/uploads") / filename
-    with open(filepath, "wb") as f:
-        f.write(await file.read())
-    return {"img_path": f"/static/uploads/{filename}"}
-
-# Create server
-@app.post("/create_server")
-async def create_server(name: str = Form(...)):
-    db = SessionLocal()
-    if db.query(Server).filter_by(name=name).first():
-        db.close()
-        return {"error": "Server already exists"}
-    new_server = Server(name=name)
-    db.add(new_server)
-    db.commit()
-    db.close()
-    return {"success": True}
+        return HTMLResponse("<h1>🛠️ Maintenance Mode Active</h1><p>Please check back later.</p>")
+    return HTMLResponse(html_content)
 
 # -----------------------
 # WEBSOCKET
 # -----------------------
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    if MAINTENANCE_MODE:
-        await websocket.close(code=1001)
+    await websocket.accept()
+    try:
+        init_data = await websocket.receive_text()
+        init_json = json.loads(init_data)
+        username = init_json.get("username", "Guest")
+        tag = init_json.get("tag", str(random.randint(1000,9999)))
+        server = init_json.get("server", "general")
+    except:
+        await websocket.close()
         return
 
-    await manager.connect(websocket)
+    if server not in connected_users:
+        connected_users[server] = []
+    connected_users[server].append(websocket)
+
+    # Send previous messages
     db = SessionLocal()
+    messages = db.query(Message).filter(Message.server==server).all()
+    for msg in messages:
+        await websocket.send_text(json.dumps({
+            "username": msg.username,
+            "tag": msg.tag,
+            "content": msg.content,
+            "img_path": msg.img_path,
+            "timestamp": msg.timestamp,
+            "pfp_path": f"/static/pfps/{msg.username}.png" if os.path.exists(f"static/pfps/{msg.username}.png") else DEFAULT_PFP
+        }))
+
     try:
-        # Receive server join info from client
-        join_data = await websocket.receive_text()
-        join_json = json.loads(join_data)
-        server = join_json.get("server", "general")
-        username = join_json.get("username", "Anon")
-
-        # Send last 50 messages from this server (lazy-load)
-        messages = db.query(Message).filter_by(server=server).order_by(Message.id.desc()).limit(50).all()
-        for msg in reversed(messages):
-            await websocket.send_text(json.dumps({
-                "username": msg.username,
-                "content": msg.content,
-                "server": msg.server,
-                "img_path": msg.img_path,
-                "pfp_path": msg.pfp_path
-            }))
-
         while True:
             data = await websocket.receive_text()
             msg_json = json.loads(data)
 
-            # Save to DB immediately
             new_msg = Message(
-                username=msg_json["username"],
-                content=msg_json["content"],
-                server=msg_json.get("server", "general"),
-                img_path=msg_json.get("img_path", ""),
-                pfp_path=msg_json.get("pfp_path", "")
+                server=server,
+                username=msg_json.get("username"),
+                tag=msg_json.get("tag"),
+                content=msg_json.get("content",""),
+                img_path=msg_json.get("img_path"),
+                timestamp=datetime.now().strftime("%H:%M")
             )
             db.add(new_msg)
             db.commit()
 
-            # Broadcast and forget (not stored in RAM)
-            await manager.broadcast(msg_json, server)
+            for user_ws in connected_users[server]:
+                try:
+                    await user_ws.send_text(json.dumps({
+                        "username": new_msg.username,
+                        "tag": new_msg.tag,
+                        "content": new_msg.content,
+                        "img_path": new_msg.img_path,
+                        "timestamp": new_msg.timestamp,
+                        "pfp_path": f"/static/pfps/{new_msg.username}.png" if os.path.exists(f"static/pfps/{new_msg.username}.png") else DEFAULT_PFP
+                    }))
+                except:
+                    continue
 
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        connected_users[server].remove(websocket)
         db.close()
+
+# -----------------------
+# IMAGE UPLOADS
+# -----------------------
+@app.post("/upload_image")
+async def upload_image(file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = f"static/images/{filename}"
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return JSONResponse({"path": f"/static/images/{filename}"})
+
+@app.post("/upload_pfp")
+async def upload_pfp(username: str = Form(...), file: UploadFile = File(...)):
+    ext = os.path.splitext(file.filename)[1]
+    filepath = f"static/pfps/{username}{ext}"
+    with open(filepath, "wb") as f:
+        f.write(await file.read())
+    return JSONResponse({"path": f"/static/pfps/{username}{ext}"})
+
+# -----------------------
+# MAINTENANCE MODE
+# -----------------------
+@app.post("/toggle_maintenance")
+async def toggle_maintenance():
+    global MAINTENANCE_MODE
+    MAINTENANCE_MODE = not MAINTENANCE_MODE
+    return {"maintenance_mode": MAINTENANCE_MODE}
