@@ -25,7 +25,7 @@ Base.metadata.create_all(bind=engine)
 # -----------------------
 # CONFIG
 # -----------------------
-MAINTENANCE_MODE = False  # Set True to activate maintenance page
+MAINTENANCE_MODE = True # Set True to activate maintenance page
 
 # -----------------------
 # CONNECTIONS
@@ -205,3 +205,4 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         db.close()
+
