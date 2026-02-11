@@ -3,130 +3,200 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NOTCORD 3.1</title>
+<title>NOTCORD</title>
 <style>
-  body { margin:0; font-family: 'Segoe UI', sans-serif; background:#36393f; color:white; }
-  .container { display:flex; height:100vh; }
-
-  /* Sidebar for servers */
-  .sidebar { width:200px; background:#2f3136; padding:10px; display:flex; flex-direction:column; }
-  .server { padding:10px; margin:5px 0; background:#40444b; border-radius:5px; cursor:pointer; }
-  .server:hover { background:#5865f2; }
-
-  /* Chat area */
-  .chat-area { flex:1; display:flex; flex-direction:column; }
-  .messages { flex:1; overflow-y:auto; padding:15px; }
-  
-  /* Individual message */
-  .message { margin:5px 0; display:flex; align-items:flex-start; }
-  .message .pfp { width:40px; height:40px; border-radius:50%; margin-right:10px; object-fit:cover; }
-  .message .content { background:#40444b; padding:10px; border-radius:10px; max-width:70%; word-wrap:break-word; }
-  .message .username { font-weight:bold; color:#7289da; margin-bottom:2px; display:block; }
-  .message .timestamp { font-size:10px; color:#b9bbbe; margin-left:5px; }
-
-  /* Input area */
-  .input-area { display:flex; padding:10px; background:#40444b; }
-  .input-area input { flex:1; padding:10px; border-radius:5px; border:none; margin-right:5px; }
-  .input-area button { padding:10px 15px; border:none; border-radius:5px; background:#5865f2; color:white; cursor:pointer; }
-
-  /* Responsive */
-  @media(max-width:600px) {
-    .container { flex-direction:column; }
-    .sidebar { width:100%; display:flex; flex-direction:row; overflow-x:auto; }
-    .server { flex:1; margin:5px; text-align:center; }
-  }
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background-color: #36393f;
+        color: white;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+    }
+    .header {
+        background: #2f3136;
+        padding: 15px;
+        font-size: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .chat-container {
+        flex: 1;
+        padding: 15px;
+        overflow-y: auto;
+    }
+    .message-input {
+        display: flex;
+        padding: 10px;
+        background: #40444b;
+    }
+    .message-input input {
+        flex: 1;
+        padding: 10px;
+        border-radius: 5px;
+        border: none;
+    }
+    .message-input button {
+        padding: 10px;
+        margin-left: 10px;
+        border: none;
+        border-radius: 5px;
+        background: #5865f2;
+        color: white;
+        cursor: pointer;
+    }
+    .message {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 10px;
+    }
+    .message img.pfp {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        margin-right: 10px;
+    }
+    .message .content {
+        background: #2f3136;
+        padding: 10px;
+        border-radius: 5px;
+        max-width: 70%;
+        word-wrap: break-word;
+    }
+    .login-container {
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        flex: 1;
+    }
+    input, select {
+        margin-bottom: 10px;
+        padding: 10px;
+        border-radius: 5px;
+        border: none;
+    }
+    button:hover {
+        opacity: 0.9;
+    }
+    .server-list {
+        display: flex;
+        margin-right: 10px;
+    }
+    .server-btn {
+        background: #5865f2;
+        border-radius: 5px;
+        padding: 5px 10px;
+        margin-right: 5px;
+        cursor: pointer;
+    }
 </style>
 </head>
 <body>
 
-<div class="container">
-  <div class="sidebar" id="servers">
-    <div class="server" onclick="switchServer('general')">#general</div>
-    <!-- Add more servers here -->
-  </div>
+<div id="login" class="login-container">
+    <h2>Join NOTCORD</h2>
+    <input id="username" placeholder="Enter username">
+    <select id="serverSelect">
+        <option value="general">#general</option>
+        <option value="gaming">#gaming</option>
+        <option value="music">#music</option>
+    </select>
+    <button onclick="joinChat()">Join</button>
+</div>
 
-  <div class="chat-area">
-    <div id="messages" class="messages"></div>
-    <div class="input-area">
-      <input id="messageInput" placeholder="Type a message...">
-      <button onclick="sendMessage()">Send</button>
-      <input type="file" id="fileInput" style="display:none;" onchange="uploadFile(event)">
-      <button onclick="document.getElementById('fileInput').click()">📎</button>
+<div id="chat" style="display:none; flex-direction: column; height: 100%;">
+    <div class="header">
+        <div>
+            <span id="currentServer">#general</span>
+        </div>
+        <div class="server-list">
+            <div class="server-btn" onclick="switchServer('general')">#general</div>
+            <div class="server-btn" onclick="switchServer('gaming')">#gaming</div>
+            <div class="server-btn" onclick="switchServer('music')">#music</div>
+        </div>
     </div>
-  </div>
+
+    <div id="messages" class="chat-container"></div>
+
+    <div class="message-input">
+        <input id="messageInput" placeholder="Type a message" onkeydown="if(event.key==='Enter'){sendMessage();}">
+        <button onclick="sendMessage()">Send</button>
+    </div>
 </div>
 
 <script>
 let ws;
-let username = prompt("Enter your username:");
-let currentServer = "general";
+let username;
+let tag;
+let server = 'general';
+const defaultPFP = "data:image/png;base64,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";
 
-function connectWebSocket() {
-  ws = new WebSocket(
-    location.protocol === "https:" ? "wss://" + location.host + "/ws" : "ws://" + location.host + "/ws"
-  );
+function joinChat() {
+    let storedAccount = JSON.parse(localStorage.getItem("notcordAccount"));
+    if (storedAccount) {
+        username = storedAccount.username;
+        tag = storedAccount.tag;
+        server = storedAccount.server || 'general';
+    } else {
+        username = document.getElementById("username").value.trim();
+        if (!username) return alert("Enter a username");
+        tag = Math.floor(Math.random() * 9000) + 1000;
+        localStorage.setItem("notcordAccount", JSON.stringify({username, tag, server}));
+    }
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({username: username, server: currentServer}));
-  };
+    document.getElementById("login").style.display = "none";
+    document.getElementById("chat").style.display = "flex";
+    document.getElementById("currentServer").textContent = "#" + server;
 
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    displayMessage(msg);
-  };
+    connectWebSocket();
 }
 
-function displayMessage(msg) {
-  const messagesDiv = document.getElementById("messages");
-  const div = document.createElement("div");
-  div.className = "message";
+function switchServer(newServer) {
+    server = newServer;
+    document.getElementById("messages").innerHTML = "";
+    document.getElementById("currentServer").textContent = "#" + server;
+    localStorage.setItem("notcordAccount", JSON.stringify({username, tag, server}));
+    connectWebSocket(); // reconnect to new server
+}
 
-  div.innerHTML = `
-    <img class="pfp" src="${msg.pfp_path || '/static/pfps/default.png'}">
-    <div class="content">
-      <span class="username">${msg.username}<span class="timestamp">${msg.timestamp || ''}</span></span>
-      ${msg.content}
-      ${msg.img_path ? `<br><img src="${msg.img_path}" style="max-width:200px; border-radius:5px; margin-top:5px;">` : ''}
-    </div>
-  `;
-  messagesDiv.appendChild(div);
-  messagesDiv.scrollTop = messagesDiv.scrollHeight;
+function connectWebSocket() {
+    if (ws) ws.close();
+    ws = new WebSocket(`ws://${location.host}/ws`);
+
+    ws.onopen = () => {
+        ws.send(JSON.stringify({username, tag, server}));
+    };
+
+    ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        const messagesDiv = document.getElementById("messages");
+        const div = document.createElement("div");
+        div.classList.add("message");
+
+        let contentHTML = `<img class="pfp" src="${msg.pfp_path || defaultPFP}">`;
+        contentHTML += `<div class="content"><b>${msg.username}#${msg.tag}</b>: ${msg.content}`;
+        if(msg.img_path) contentHTML += `<br><img src="${msg.img_path}" style="max-width:200px; max-height:200px; border-radius:5px;">`;
+        contentHTML += `</div>`;
+
+        div.innerHTML = contentHTML;
+        messagesDiv.appendChild(div);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    };
+
+    ws.onclose = () => console.log("WebSocket closed");
 }
 
 function sendMessage() {
-  const input = document.getElementById("messageInput");
-  if(input.value.trim() === "") return;
-  ws.send(JSON.stringify({username: username, content: input.value, server: currentServer}));
-  input.value = "";
+    const input = document.getElementById("messageInput");
+    const content = input.value.trim();
+    if (!content) return;
+    ws.send(JSON.stringify({username, tag, content, server}));
+    input.value = "";
 }
-
-document.getElementById("messageInput").addEventListener("keydown", function(e){
-  if(e.key === "Enter") sendMessage();
-});
-
-function switchServer(server) {
-  currentServer = server;
-  document.getElementById("messages").innerHTML = '';
-  ws.send(JSON.stringify({username: username, server: currentServer}));
-}
-
-// Handle image upload
-function uploadFile(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const formData = new FormData();
-  formData.append('file', file);
-
-  fetch('/upload_image', {method:'POST', body:formData})
-    .then(res => res.json())
-    .then(data => {
-      ws.send(JSON.stringify({username: username, content: '', server: currentServer, img_path: data.path}));
-    })
-    .catch(err => console.error(err));
-}
-
-connectWebSocket();
 </script>
 
 </body>
