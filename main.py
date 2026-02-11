@@ -11,7 +11,7 @@ import random
 
 # -----------------------
 # APP & STATIC SETUP
-# -----------------------
+# ------------------------
 app = FastAPI()
 
 os.makedirs("static/images", exist_ok=True)
@@ -156,3 +156,4 @@ async def toggle_maintenance():
     global MAINTENANCE_MODE
     MAINTENANCE_MODE = not MAINTENANCE_MODE
     return {"maintenance_mode": MAINTENANCE_MODE}
+
