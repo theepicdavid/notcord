@@ -3,7 +3,6 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
-import json
 
 app = FastAPI()
 
@@ -18,19 +17,17 @@ Base = declarative_base()
 class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True)
-    username = Column(String)
     content = Column(String)
 
 Base.metadata.create_all(bind=engine)
 
 # -----------------------
-# GLOBAL STATE
+# WEBSOCKET CONNECTIONS
 # -----------------------
-connected_users = {}
-service_mode = False
+connected_users = []
 
 # -----------------------
-# FRONTEND
+# FRONTEND (REVAMPED GUI ONLY)
 # -----------------------
 html = """
 <!DOCTYPE html>
@@ -39,143 +36,275 @@ html = """
 <title>NOTCORD</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body { margin:0; font-family:Segoe UI; background:#1e1f22; color:white; }
-.sidebar { width:220px; background:#2b2d31; position:fixed; top:0; bottom:0; padding:20px; }
-.chat { margin-left:220px; height:100vh; display:flex; flex-direction:column; }
-.header { background:#313338; padding:15px; font-weight:bold; }
-.messages { flex:1; padding:20px; overflow-y:auto; display:flex; flex-direction:column; gap:8px;}
-.message { background:#383a40; padding:10px 14px; border-radius:8px; max-width:70%; position:relative;}
-.message.me { background:#5865f2; align-self:flex-end;}
-.username { font-weight:bold; cursor:pointer; }
-.input-area { display:flex; padding:15px; background:#2b2d31; }
-.input-area input { flex:1; padding:10px; border:none; border-radius:6px; }
-.input-area button { margin-left:10px; padding:10px 15px; border:none; border-radius:6px; background:#5865f2; color:white; cursor:pointer;}
-#login { position:fixed; inset:0; background:#1e1f22; display:flex; justify-content:center; align-items:center;}
-.login-box { background:#2b2d31; padding:30px; border-radius:8px;}
-.popup { position:fixed; background:#2b2d31; padding:20px; border-radius:8px; display:none;}
-.admin-panel { position:fixed; right:20px; bottom:20px; background:#2b2d31; padding:15px; border-radius:8px; display:none;}
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", sans-serif;
+    background: #1e1f22;
+    color: white;
+    display: flex;
+    height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 230px;
+    background: #2b2d31;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar h2 {
+    margin: 0 0 20px 0;
+}
+
+/* Chat layout */
+.chat-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background: #313338;
+    padding: 15px 20px;
+    font-weight: bold;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.chat-container {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Message bubble */
+.message {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: #383a40;
+    word-wrap: break-word;
+    position: relative;
+}
+
+.message.me {
+    align-self: flex-end;
+    background: #5865f2;
+}
+
+/* Username */
+.username {
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* Input */
+.message-input {
+    padding: 15px;
+    background: #2b2d31;
+    display: flex;
+    gap: 10px;
+}
+
+.message-input input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    background: #1e1f22;
+    color: white;
+}
+
+.message-input button {
+    padding: 12px 18px;
+    border-radius: 8px;
+    border: none;
+    background: #5865f2;
+    color: white;
+    cursor: pointer;
+}
+
+/* Login */
+#login {
+    position: fixed;
+    inset: 0;
+    background: #1e1f22;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.login-box {
+    background: #2b2d31;
+    padding: 30px;
+    border-radius: 10px;
+    width: 300px;
+    text-align: center;
+}
+
+.login-box input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 6px;
+    border: none;
+}
+
+/* Profile popup */
+#profilePopup {
+    position: fixed;
+    background: #2b2d31;
+    padding: 20px;
+    border-radius: 10px;
+    display: none;
+}
+
+/* Admin panel */
+#adminPanel {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    background: #2b2d31;
+    padding: 15px;
+    border-radius: 10px;
+    display: none;
+}
 </style>
 </head>
 <body>
 
 <div class="sidebar">
-<h2>NOTCORD</h2>
-<div># general</div>
+    <h2>NOTCORD</h2>
+    <div># general</div>
 </div>
 
-<div class="chat">
-<div class="header"># general</div>
-<div id="messages" class="messages"></div>
-<div class="input-area">
-<input id="messageInput" placeholder="Type message...">
-<button onclick="sendMessage()">Send</button>
-</div>
+<div class="chat-wrapper">
+    <div class="header">
+        # general
+        <button id="adminToggle" style="display:none;" onclick="toggleAdmin()">Admin</button>
+    </div>
+
+    <div id="messages" class="chat-container"></div>
+
+    <div class="message-input">
+        <input id="messageInput" placeholder="Message #general">
+        <button onclick="sendMessage()">Send</button>
+    </div>
 </div>
 
 <div id="login">
-<div class="login-box">
-<h2>Join NOTCORD</h2>
-<input id="username" placeholder="Username">
-<button onclick="join()">Join</button>
-<p id="error" style="color:red;"></p>
-</div>
+    <div class="login-box">
+        <h2>Welcome to NOTCORD</h2>
+        <input id="username" placeholder="Enter username">
+        <button onclick="joinChat()">Join</button>
+    </div>
 </div>
 
-<div id="profilePopup" class="popup"></div>
+<div id="profilePopup"></div>
 
-<div id="adminPanel" class="admin-panel">
-<h3>Admin Panel</h3>
-<button onclick="clearMessages()">Clear All Messages</button><br><br>
-<button onclick="toggleService()">Toggle Service Mode</button>
+<div id="adminPanel">
+    <h3>Admin Panel</h3>
+    <button onclick="clearChat()">Clear Chat (Local)</button><br><br>
+    <button onclick="toggleServiceMode()">Toggle Service Mode</button>
 </div>
 
 <script>
 let ws;
 let username;
-let isAdmin = false;
+let serviceMode = false;
 
-function join(){
+function joinChat(){
     username = document.getElementById("username").value.trim();
     if(!username) return;
 
-    ws = new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
-
-    ws.onopen = ()=> {
-        ws.send(JSON.stringify({type:"join", username:username}));
-    };
-
-    ws.onmessage = (event)=>{
-        const data = JSON.parse(event.data);
-
-        if(data.type==="error"){
-            document.getElementById("error").innerText = data.message;
-        }
-
-        if(data.type==="init"){
-            document.getElementById("login").style.display="none";
-            if(data.admin){
-                isAdmin = true;
-                document.getElementById("adminPanel").style.display="block";
-            }
-            data.messages.forEach(addMessage);
-        }
-
-        if(data.type==="message"){
-            addMessage(data);
-        }
-
-        if(data.type==="delete"){
-            const el = document.getElementById("msg-"+data.id);
-            if(el) el.remove();
-        }
-
-        if(data.type==="service"){
-            alert("Service Mode is now " + (data.enabled ? "ENABLED" : "DISABLED"));
-        }
-    };
-}
-
-function addMessage(data){
-    const div = document.createElement("div");
-    div.className = "message" + (data.username===username ? " me":"");
-    div.id = "msg-"+data.id;
-    div.innerHTML = '<span class="username" onclick="showProfile(\\''+data.username+'\\')">'+data.username+'</span>: '+data.content;
-
-    if(isAdmin){
-        const del = document.createElement("button");
-        del.innerText="X";
-        del.style.position="absolute";
-        del.style.right="5px";
-        del.onclick=()=>ws.send(JSON.stringify({type:"delete", id:data.id}));
-        div.appendChild(del);
+    if(username === "DavidDoesTech"){
+        document.getElementById("adminToggle").style.display="inline-block";
     }
 
-    document.getElementById("messages").appendChild(div);
+    let protocol = location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(protocol + location.host + "/ws");
+
+    ws.onmessage = function(event){
+        addMessage(event.data);
+    };
+
+    document.getElementById("login").style.display="none";
+}
+
+function addMessage(text){
+    const messages = document.getElementById("messages");
+
+    const div = document.createElement("div");
+    div.className="message";
+
+    if(text.startsWith(username + ":")){
+        div.classList.add("me");
+    }
+
+    const split = text.split(": ");
+    const user = split[0];
+    const content = split.slice(1).join(": ");
+
+    div.innerHTML = '<span class="username" onclick="showProfile(\\''+user+'\\')">'+user+'</span>: '+content;
+
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
 }
 
 function sendMessage(){
+    if(serviceMode && username !== "DavidDoesTech"){
+        alert("Service Mode Enabled");
+        return;
+    }
+
     const input=document.getElementById("messageInput");
-    if(!input.value.trim()) return;
-    ws.send(JSON.stringify({type:"message", content:input.value}));
+    if(input.value.trim()==="") return;
+
+    ws.send(username + ": " + input.value);
     input.value="";
 }
 
 function showProfile(name){
     const popup=document.getElementById("profilePopup");
-    popup.innerHTML="<h3>"+name+"</h3><p>User profile popup</p>";
+    popup.innerHTML="<h3>"+name+"</h3><p>Profile popup</p><button onclick='closeProfile()'>Close</button>";
     popup.style.display="block";
     popup.style.top="100px";
     popup.style.left="300px";
 }
 
-function clearMessages(){
-    ws.send(JSON.stringify({type:"clear"}));
+function closeProfile(){
+    document.getElementById("profilePopup").style.display="none";
 }
 
-function toggleService(){
-    ws.send(JSON.stringify({type:"service"}));
+function toggleAdmin(){
+    const panel=document.getElementById("adminPanel");
+    panel.style.display = panel.style.display==="block" ? "none" : "block";
 }
+
+function clearChat(){
+    document.getElementById("messages").innerHTML="";
+}
+
+function toggleServiceMode(){
+    serviceMode=!serviceMode;
+    alert("Service Mode: " + (serviceMode ? "ON":"OFF"));
+}
+
+document.addEventListener("keydown", function(event){
+    if(event.key==="Enter"){
+        sendMessage();
+    }
+});
 </script>
+
 </body>
 </html>
 """
@@ -185,80 +314,31 @@ async def get():
     return HTMLResponse(html)
 
 # -----------------------
-# WEBSOCKET
+# WEBSOCKET ENDPOINT
 # -----------------------
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global service_mode
     await websocket.accept()
+    connected_users.append(websocket)
     db = SessionLocal()
-    username = None
+
+    messages = db.query(Message).all()
+    for msg in messages:
+        await websocket.send_text(msg.content)
 
     try:
         while True:
-            data = json.loads(await websocket.receive_text())
+            data = await websocket.receive_text()
 
-            if data["type"] == "join":
-                if data["username"] in connected_users:
-                    await websocket.send_text(json.dumps({
-                        "type":"error",
-                        "message":"Username already taken."
-                    }))
-                    continue
+            new_msg = Message(content=data)
+            db.add(new_msg)
+            db.commit()
 
-                username = data["username"]
-                connected_users[username] = websocket
-
-                messages = db.query(Message).all()
-                await websocket.send_text(json.dumps({
-                    "type":"init",
-                    "messages":[{"id":m.id,"username":m.username,"content":m.content} for m in messages],
-                    "admin": username=="DavidDoesTech"
-                }))
-
-            elif data["type"] == "message":
-                if service_mode and username!="DavidDoesTech":
-                    continue
-
-                new_msg = Message(username=username, content=data["content"])
-                db.add(new_msg)
-                db.commit()
-                db.refresh(new_msg)
-
-                for user in connected_users.values():
-                    await user.send_text(json.dumps({
-                        "type":"message",
-                        "id":new_msg.id,
-                        "username":username,
-                        "content":data["content"]
-                    }))
-
-            elif data["type"] == "delete" and username=="DavidDoesTech":
-                msg = db.query(Message).filter(Message.id==data["id"]).first()
-                if msg:
-                    db.delete(msg)
-                    db.commit()
-                    for user in connected_users.values():
-                        await user.send_text(json.dumps({
-                            "type":"delete",
-                            "id":data["id"]
-                        }))
-
-            elif data["type"] == "clear" and username=="DavidDoesTech":
-                db.query(Message).delete()
-                db.commit()
-
-            elif data["type"] == "service" and username=="DavidDoesTech":
-                service_mode = not service_mode
-                for user in connected_users.values():
-                    await user.send_text(json.dumps({
-                        "type":"service",
-                        "enabled":service_mode
-                    }))
+            for user in connected_users:
+                await user.send_text(data)
 
     except WebSocketDisconnect:
-        if username in connected_users:
-            del connected_users[username]
+        connected_users.remove(websocket)
         db.close()
 
 # -----------------------
