@@ -3,7 +3,6 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
-import random
 
 app = FastAPI()
 
@@ -28,102 +27,253 @@ Base.metadata.create_all(bind=engine)
 connected_users = []
 
 # -----------------------
-# FRONTEND HTML
+# FRONTEND HTML (FULL REVAMP)
 # -----------------------
 html = """
 <!DOCTYPE html>
 <html>
 <head>
 <title>NOTCORD</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
-body { margin:0; font-family: Arial; background-color: #36393f; color: white; }
-.header { background: #2f3136; padding: 15px; font-size: 20px; }
-.chat-container { padding: 20px; height: 70vh; overflow-y: auto; }
-input { padding: 10px; border: none; border-radius: 5px; }
-button { padding: 10px; background: #5865f2; color: white; border: none; border-radius: 5px; }
-.message-input { position: fixed; bottom: 0; width: 100%; padding: 15px; background: #40444b; }
-.message { margin-bottom: 5px; }
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", sans-serif;
+    background: #1e1f22;
+    color: white;
+    display: flex;
+    height: 100vh;
+}
+
+/* Sidebar */
+.sidebar {
+    width: 220px;
+    background: #2b2d31;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+}
+
+.sidebar h2 {
+    margin: 0;
+    margin-bottom: 20px;
+    font-size: 18px;
+}
+
+.channel {
+    padding: 8px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.channel:hover {
+    background: #3a3c42;
+}
+
+/* Main chat area */
+.chat-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.header {
+    background: #313338;
+    padding: 15px 20px;
+    font-weight: bold;
+    border-bottom: 1px solid #1e1f22;
+}
+
+.chat-container {
+    flex: 1;
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Message bubbles */
+.message {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.4;
+    word-wrap: break-word;
+}
+
+.other {
+    background: #383a40;
+    align-self: flex-start;
+}
+
+.me {
+    background: #5865f2;
+    align-self: flex-end;
+}
+
+/* Input area */
+.message-input {
+    padding: 15px;
+    background: #2b2d31;
+    display: flex;
+    gap: 10px;
+}
+
+.message-input input {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+    background: #1e1f22;
+    color: white;
+}
+
+.message-input button {
+    padding: 12px 18px;
+    border-radius: 8px;
+    border: none;
+    background: #5865f2;
+    color: white;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.message-input button:hover {
+    background: #4752c4;
+}
+
+/* Login screen */
+#login {
+    position: absolute;
+    inset: 0;
+    background: #1e1f22;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.login-box {
+    background: #2b2d31;
+    padding: 30px;
+    border-radius: 10px;
+    width: 300px;
+    text-align: center;
+}
+
+.login-box input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 15px;
+    border-radius: 6px;
+    border: none;
+}
+
+.login-box button {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: none;
+    background: #5865f2;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
 </style>
 </head>
 <body>
 
-<div class="header">NOTCORD - #general</div>
-
-<div id="login">
-  <div style="padding:20px;">
-    <input id="username" placeholder="Enter username">
-    <button onclick="joinChat()">Join NOTCORD</button>
-  </div>
+<div class="sidebar">
+    <h2>NOTCORD</h2>
+    <div class="channel"># general</div>
 </div>
 
-<div id="chat" style="display:none;">
-  <div id="messages" class="chat-container"></div>
-  <div class="message-input">
-    <input id="messageInput" style="width:80%;" placeholder="Type message">
-    <button onclick="sendMessage()">Send</button>
-  </div>
+<div class="chat-wrapper">
+    <div class="header"># general</div>
+    <div id="messages" class="chat-container"></div>
+    <div class="message-input">
+        <input id="messageInput" placeholder="Message #general">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<div id="login">
+    <div class="login-box">
+        <h2>Welcome to NOTCORD</h2>
+        <input id="username" placeholder="Enter username">
+        <button onclick="joinChat()">Join Chat</button>
+    </div>
 </div>
 
 <script>
-// -----------------------
-// USER ACCOUNT
-// -----------------------
 let ws;
 let username;
 let usertag;
 
 function generateTag() {
-    return Math.floor(Math.random() * 9000 + 1000); // 4-digit tag
+    return Math.floor(Math.random() * 9000 + 1000);
 }
 
-// Load account from LocalStorage if exists
+// Auto login from localStorage
 if(localStorage.getItem("notcordUser")){
     const data = JSON.parse(localStorage.getItem("notcordUser"));
     username = data.username;
     usertag = data.usertag;
-    joinChat(true);
+    connectWebSocket();
 }
 
-function joinChat(fromStorage=false) {
-    if(!fromStorage){
-        username = document.getElementById("username").value.trim();
-        if(!username) return alert("Enter username");
-        usertag = generateTag();
-        localStorage.setItem("notcordUser", JSON.stringify({username, usertag}));
-    }
+function joinChat(){
+    username = document.getElementById("username").value.trim();
+    if(!username) return alert("Enter username");
 
+    usertag = generateTag();
+    localStorage.setItem("notcordUser", JSON.stringify({username, usertag}));
+    connectWebSocket();
+}
+
+function connectWebSocket(){
     let protocol = location.protocol === "https:" ? "wss://" : "ws://";
     ws = new WebSocket(protocol + location.host + "/ws");
 
     ws.onmessage = function(event){
-        const messages = document.getElementById("messages");
-        const div = document.createElement("div");
-        div.textContent = event.data;
-        div.className = "message";
-        messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
+        addMessage(event.data);
     };
 
     document.getElementById("login").style.display = "none";
-    document.getElementById("chat").style.display = "block";
 }
 
-// -----------------------
-// SEND MESSAGE
-// -----------------------
+function addMessage(text){
+    const messages = document.getElementById("messages");
+    const div = document.createElement("div");
+
+    if(text.startsWith(username + "#" + usertag)){
+        div.className = "message me";
+    } else {
+        div.className = "message other";
+    }
+
+    div.textContent = text;
+    messages.appendChild(div);
+    messages.scrollTop = messages.scrollHeight;
+}
+
 function sendMessage(){
     const input = document.getElementById("messageInput");
     if(input.value.trim()==="") return;
+
     const msg = username + "#" + usertag + ": " + input.value;
     ws.send(msg);
     input.value = "";
 }
 
-// -----------------------
-// ENTER KEY SEND
-// -----------------------
 document.addEventListener("keydown", function(event){
-    if(event.key==="Enter" && document.getElementById("chat").style.display==="block"){
+    if(event.key==="Enter"){
         sendMessage();
     }
 });
@@ -146,7 +296,6 @@ async def websocket_endpoint(websocket: WebSocket):
     connected_users.append(websocket)
     db = SessionLocal()
 
-    # Send previous messages
     messages = db.query(Message).all()
     for msg in messages:
         await websocket.send_text(msg.content)
@@ -155,12 +304,10 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
 
-            # Save to database
             new_msg = Message(content=data)
             db.add(new_msg)
             db.commit()
 
-            # Broadcast to all users
             for user in connected_users:
                 await user.send_text(data)
 
