@@ -2,6 +2,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from sqlalchemy import create_engine, Column, Integer, String, Boolean, ForeignKey
 from sqlalchemy.orm import sessionmaker, declarative_base
+import hashlib
 import json
 import os
 
@@ -20,6 +21,7 @@ class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     username = Column(String, unique=True)
+    password_hash = Column(String)
     banned = Column(Boolean, default=False)
 
 
@@ -45,7 +47,7 @@ class SystemState(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# Create defaults if first run
+# Create defaults on first run
 db = SessionLocal()
 if not db.query(Channel).first():
     db.add_all([
@@ -63,8 +65,16 @@ db.close()
 
 connected_users = {}  # websocket -> {"username": str, "channel": str}
 
+
 # -----------------------
-# ORIGINAL GUI (ONLY channel list injected)
+# PASSWORD HASH FUNCTION
+# -----------------------
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+# -----------------------
+# FRONTEND (Original Style + Password Field Added)
 # -----------------------
 
 html = """
@@ -75,111 +85,22 @@ html = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 * { box-sizing: border-box; }
-
-body {
-    margin: 0;
-    font-family: "Segoe UI", sans-serif;
-    background: #1e1f22;
-    color: white;
-    display: flex;
-    height: 100vh;
-}
-
-.sidebar {
-    width: 230px;
-    background: #2b2d31;
-    padding: 20px;
-    display: flex;
-    flex-direction: column;
-}
-
-.sidebar h2 { margin: 0 0 20px 0; }
-
-.channel {
-    padding: 6px;
-    border-radius: 6px;
-    cursor: pointer;
-}
-
-.channel:hover { background:#3a3c43; }
-
-.active-channel { background:#5865f2; }
-
-.chat-wrapper { flex:1; display:flex; flex-direction:column; }
-
-.header {
-    background: #313338;
-    padding: 15px 20px;
-    font-weight: bold;
-    display:flex;
-    justify-content:space-between;
-    align-items:center;
-}
-
-.chat-container {
-    flex:1;
-    padding:20px;
-    overflow-y:auto;
-    display:flex;
-    flex-direction:column;
-    gap:10px;
-}
-
-.message {
-    max-width:70%;
-    padding:10px 14px;
-    border-radius:10px;
-    background:#383a40;
-}
-
-.message.me {
-    align-self:flex-end;
-    background:#5865f2;
-}
-
-.message-input {
-    padding:15px;
-    background:#2b2d31;
-    display:flex;
-    gap:10px;
-}
-
-.message-input input {
-    flex:1;
-    padding:12px;
-    border-radius:8px;
-    border:none;
-    background:#1e1f22;
-    color:white;
-}
-
-.message-input button {
-    padding:12px 18px;
-    border-radius:8px;
-    border:none;
-    background:#5865f2;
-    color:white;
-    cursor:pointer;
-}
-
-#login {
-    position:fixed;
-    inset:0;
-    background:#1e1f22;
-    display:flex;
-    justify-content:center;
-    align-items:center;
-}
-
-#adminPanel {
-    position:fixed;
-    right:20px;
-    bottom:20px;
-    background:#2b2d31;
-    padding:15px;
-    border-radius:10px;
-    display:none;
-}
+body { margin:0;font-family:"Segoe UI",sans-serif;background:#1e1f22;color:white;display:flex;height:100vh;}
+.sidebar { width:230px;background:#2b2d31;padding:20px;display:flex;flex-direction:column;}
+.sidebar h2 { margin:0 0 20px 0;}
+.channel { padding:6px;border-radius:6px;cursor:pointer;}
+.channel:hover { background:#3a3c43;}
+.active-channel { background:#5865f2;}
+.chat-wrapper { flex:1;display:flex;flex-direction:column;}
+.header { background:#313338;padding:15px 20px;font-weight:bold;display:flex;justify-content:space-between;}
+.chat-container { flex:1;padding:20px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;}
+.message { max-width:70%;padding:10px 14px;border-radius:10px;background:#383a40;}
+.message.me { align-self:flex-end;background:#5865f2;}
+.message-input { padding:15px;background:#2b2d31;display:flex;gap:10px;}
+.message-input input { flex:1;padding:12px;border-radius:8px;border:none;background:#1e1f22;color:white;}
+.message-input button { padding:12px 18px;border-radius:8px;border:none;background:#5865f2;color:white;cursor:pointer;}
+#login { position:fixed;inset:0;background:#1e1f22;display:flex;justify-content:center;align-items:center;}
+#adminPanel { position:fixed;right:20px;bottom:20px;background:#2b2d31;padding:15px;border-radius:10px;display:none;}
 </style>
 </head>
 <body>
@@ -205,9 +126,10 @@ body {
 
 <div id="login">
     <div>
-        <h2>Welcome to NOTCORD</h2>
-        <input id="username" placeholder="Enter username"><br><br>
-        <button onclick="joinChat()">Join</button>
+        <h2>Login / Create Account</h2>
+        <input id="username" placeholder="Username"><br><br>
+        <input id="password" type="password" placeholder="Password"><br><br>
+        <button onclick="joinChat()">Enter</button>
         <p id="loginError" style="color:red;"></p>
     </div>
 </div>
@@ -229,21 +151,29 @@ let currentChannel="general";
 
 function joinChat(){
     username=document.getElementById("username").value.trim();
-    if(!username) return;
+    let password=document.getElementById("password").value;
+    if(!username || !password) return;
 
     ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
 
     ws.onopen=function(){
-        ws.send(JSON.stringify({type:"login",username:username}));
+        ws.send(JSON.stringify({
+            type:"login",
+            username:username,
+            password:password
+        }));
     };
 
     ws.onmessage=function(event){
         let data=JSON.parse(event.data);
 
+        if(data.type==="error"){
+            document.getElementById("loginError").innerText=data.message;
+        }
+
         if(data.type==="banned"){
             document.getElementById("loginError").innerText="Account Banned";
             ws.close();
-            return;
         }
 
         if(data.type==="login_success"){
@@ -335,6 +265,7 @@ document.getElementById("messageInput").addEventListener("keydown",function(e){
 async def get():
     return HTMLResponse(html)
 
+
 # -----------------------
 # WEBSOCKET
 # -----------------------
@@ -349,18 +280,31 @@ async def websocket_endpoint(websocket: WebSocket):
             raw = await websocket.receive_text()
             data = json.loads(raw)
 
+            # LOGIN / CREATE ACCOUNT
             if data["type"] == "login":
                 user = db.query(User).filter_by(username=data["username"]).first()
+
                 if not user:
-                    user = User(username=data["username"])
+                    user = User(
+                        username=data["username"],
+                        password_hash=hash_password(data["password"]),
+                        banned=False
+                    )
                     db.add(user)
                     db.commit()
+                else:
+                    if user.password_hash != hash_password(data["password"]):
+                        await websocket.send_text(json.dumps({
+                            "type":"error",
+                            "message":"Invalid Password"
+                        }))
+                        continue
 
                 if user.banned:
                     await websocket.send_text(json.dumps({"type":"banned"}))
                     continue
 
-                username=user.username
+                username = user.username
                 connected_users[websocket]={"username":username,"channel":"general"}
 
                 await websocket.send_text(json.dumps({"type":"login_success"}))
@@ -443,6 +387,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if websocket in connected_users:
             del connected_users[websocket]
         db.close()
+
 
 if __name__ == "__main__":
     import uvicorn
